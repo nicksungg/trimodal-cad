@@ -1,0 +1,265 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2025
+
+% \usepackage{neurips_2025}
+\usepackage[preprint]{neurips_2025}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{amsmath}
+
+\title{Multimodal CAD Code Generation from Images and Point Clouds}
+
+\author{
+  Nicholas Sung \\
+  Department of Mechanical Engineering \\
+  Massachusetts Institute of Technology \\
+  \texttt{nicksung@mit.edu} \\
+  \url{https://github.com/nicksungg/trimodal-cad}
+  \and
+  Anna C. Doris \\
+  Department of Mechanical Engineering \\
+  Massachusetts Institute of Technology \\
+  \texttt{adoris@mit.edu}\\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Recent advances in AI for CAD have demonstrated that Vision-Language Models (VLMs) can be fine-tuned to generate editable parametric CAD code from image inputs. However, 2D image-based conditioning inherently fails to capture the rich geometric structure (e.g., hidden holes and rear faces) present in 3D representations such as point clouds. In this work, we investigate a multimodal CAD code generation framework that combines 2D images with explicit 3D point clouds to predict executable CadQuery Python programs. Our approach uses a DINOv2 image encoder and a pretrained point cloud encoder, followed by learned projection layers that map both modalities into the language model embedding space. We condition generation through prompt-level multimodal token fusion, where projected image and point cloud tokens are prepended to the textual context prior to autoregressive decoding. We train on CAD-Evolve, a large-scale dataset of procedural CAD programs constructed from executable CadQuery Python code and paired with rendered multi-view images and sampled point clouds. We also define an evaluation suite spanning five datasets---DeepCAD, ABC Simple, ABC Complex, MCB, and Objaverse---with complexity stratification based on face count. We study three preliminary adaptation strategies: training only linear projection layers while freezing both modality adapters, jointly fine-tuning the adapters together with the LLM, and augmenting supervised training with reinforcement learning to optimize CAD-specific rewards such as executability and geometric fidelity. We report the full benchmark structure and evaluation protocol, with current quantitative results available for the CAD-Coder baseline and placeholders for the remaining experiments.
+\end{abstract}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figures/summary_placeholder.png}
+    \caption{Overview of the proposed multimodal CAD generation framework. The model takes rendered images and point clouds derived from executable CadQuery programs and predicts CAD code through prompt-level fusion of visual, geometric, and textual tokens prior to autoregressive decoding.}
+    \label{fig:summary}
+\end{figure}
+
+\section{Introduction}
+The automated generation of parametric Computer-Aided Design (CAD) programs from visual inputs remains a fundamental challenge in multimodal AI. Unlike meshes or point clouds, CAD models encode a structured sequence of operations that define both geometry and design intent, making them essential for downstream editing and manufacturing. Recent work has shown that Vision-Language Models (VLMs) can be fine-tuned to generate CAD code directly from images~\cite{cadcoder}. However, image-only conditioning is fundamentally limited: renderings do not fully capture occluded geometry such as internal structures or rear-facing features. As a result, models must infer missing 3D information, often leading to geometric inaccuracies. 
+Point clouds offer a complementary modality by providing explicit 3D structure. Methods such as CAD-Recode~\cite{cadrecode} demonstrate that conditioning on point clouds significantly improves geometric fidelity. However, existing multimodal approaches typically rely on \emph{early fusion}, where modality-specific embeddings are concatenated only at the input level. This places the burden of cross-modal reasoning entirely on the Transformer and risks the loss of geometric information in deeper layers.
+
+\textbf{In this work,} we propose a tri-modal CAD generation framework that integrates images, point clouds, and code through \emph{structured fusion}. Specifically, we investigate a prompt-level multimodal conditioning strategy in which projected image and point cloud tokens are prepended to the language model context before autoregressive generation. This design provides the decoder with both semantic visual cues and explicit geometric context at generation time while keeping the underlying transformer architecture unchanged.
+
+We train and evaluate our approach on a large-scale dataset of procedural CAD models and establish a comprehensive benchmarking suite across five datasets. In addition to the main model, we investigate three preliminary adaptation regimes spanning parameter-efficient fine-tuning, joint multimodal fine-tuning, and reinforcement learning with CAD-specific rewards. Figure~\ref{fig:summary} presents an overview of the proposed multimodal CAD generation pipeline, illustrating how image, point cloud, and CADQuery code are fused prior to autoregressive code generation.
+
+\section{Related Work}
+Our work lies at the intersection of 3D representation learning, multimodal alignment, and autoregressive CAD generation.
+
+\paragraph{Point Cloud Representation Learning.}
+Early works such as PointNet~\cite{qi2017pointnet} introduced permutation-invariant architectures for processing unordered point sets, later extended by PointNet++~\cite{qi2017pointnet++} to capture local geometric structure. More recent self-supervised methods, including Point-BERT~\cite{yu2022point} and Point-MAE~\cite{pang2023masked}, learn rich geometric priors via masked reconstruction objectives. While these models produce strong global shape representations, they are not designed to encode the sequential construction logic required for parametric CAD generation.
+
+\paragraph{Multimodal Alignment of 2D and 3D.}
+Several works aim to align point clouds with images and text in a shared embedding space. CLIP~\cite{radford2021clip} established large-scale image-text alignment, while Michelangelo~\cite{zhao2023michelangelo} extends this paradigm to jointly align point clouds, images, and text. Similarly, CrossPoint~\cite{afham2022crosspoint} and PointCLIP~\cite{zhang2022pointclip} explore cross-modal contrastive learning between 3D and 2D representations. However, these approaches focus on semantic alignment rather than structured program generation, and do not explicitly model geometric constraints required for CAD synthesis.
+
+\paragraph{Autoregressive CAD Generation.}
+Generating editable CAD models requires predicting a sequence of parametric operations. DeepCAD~\cite{wu2021deepcad} introduced Transformer-based autoregressive modeling of CAD programs, while CAD-Coder~\cite{cadcoder} demonstrated that Vision-Language Models can generate executable CadQuery code directly from images. Despite high syntax validity, these vision-only approaches suffer from inherent ambiguity due to occlusion, often leading to lower geometric fidelity.
+
+\paragraph{Point Cloud-Conditioned CAD Generation.}
+To address occlusion, recent works incorporate explicit 3D inputs. CAD-Recode~\cite{cadrecode} encodes point clouds as token sequences and conditions an LLM to generate CAD programs, achieving strong geometric fidelity. CAD-MLLM~\cite{cadmllm} extends this to multimodal inputs by combining point clouds and images via linear projection and token concatenation. However, these approaches still rely primarily on \emph{early fusion}, where modalities are combined only once at the input layer.
+
+\paragraph{Reinforcement Learning for Program Generation.}
+Beyond supervised fine-tuning, reinforcement learning (RL) has been used to improve code and program generation by optimizing execution-based or task-specific rewards. Recent work such as CodeRL~\cite{le2022coderl} demonstrates that compiler or unit-test feedback can be used as a reward signal to improve functional correctness beyond token-level imitation learning. These ideas are especially relevant for CAD code generation, where generated programs must not only be syntactically valid but also executable and geometrically faithful. In our setting, RL provides a natural future direction for optimizing downstream CAD-specific objectives such as successful execution, valid STEP export, and geometric similarity to the target shape.
+
+\paragraph{Our Contribution.}
+We investigate a practical multimodal framework for CAD code generation that combines image features, point cloud features, and language modeling through prompt-level fusion. Rather than modifying transformer internals, our method projects visual and geometric representations into the shared LLM embedding space and prepends them to the textual context before autoregressive decoding. We also establish a unified benchmark protocol across five datasets and study different adaptation regimes, ranging from lightweight linear-only tuning to joint fine-tuning of the adapters and language model. Finally, we outline reinforcement learning as a promising future direction for improving executability and geometric fidelity through task-level reward optimization.
+
+\section{Problem Statement}
+We formalize multimodal CAD code generation as an autoregressive sequence modeling problem conditioned on both visual and spatial data. Let the multimodal input be defined as $X = (I, P)$, where $I$ represents a set of rendered images of the target object and $P = \{p_1, \dots, p_N\} \in \mathbb{R}^{N \times 3}$ is a corresponding 3D point cloud defining the explicit geometric scaffold.
+
+The goal is to maximize the likelihood of the underlying CAD program sequence, denoted as $S = \{s_1, s_2, ..., s_T\}$, where each $s_t$ is a token from the vocabulary $\Sigma$ of a structured CAD programming language (CadQuery Python).
+
+Let $\mathcal{C}$ represent the set of all valid CAD codes that satisfy both syntactic Python validation $\phi_{syn}$ and geometric feasibility $\phi_{cad}$. The objective is to learn a parameterized mapping that minimizes the negative log-likelihood:
+\begin{equation}
+\mathcal{L}_{NLL} = - \sum_{t=1}^{T} \log \mathbb{P}_{\theta}(s_t \mid s_{<t}, I, P)
+\end{equation}
+By explicitly conditioning the probability distribution of the $t$-th token on both image evidence and point cloud geometry, the model aligns 2D semantic boundaries with 3D spatial anchors to sequentially construct $S \in \mathcal{C}$.
+
+\section{Proposed Approach}
+To map multimodal inputs into a shared reasoning space for mechanical CAD geometry, we implement a tri-modal alignment and generation architecture.
+
+\paragraph{Feature Extraction and Alignment.}
+To process visual data, we utilize 8 multi-view rendered images per object, sourced from the CAD-Evolve dataset. These views are encoded using a frozen pretrained Vision Transformer, DINOv2~\cite{oquab2023dinov2}, to extract robust semantic features. Similar to the projection strategy in CAD-Coder, we freeze the DINOv2 encoder and train a linear projection layer to map visual tokens into the LLM embedding space. To process spatial geometry, we adopt the point cloud projection module from CAD-Recode~\cite{cadrecode}, which uses furthest point sampling to $N_p = 256$ points and Fourier positional encodings. We project the resulting point cloud features into the shared LLM hidden dimension, producing a sequence of spatial query tokens $\mathbf{Q}_p$.
+
+\paragraph{Prompt-Level Multimodal Conditioning.}
+Rather than modifying the internal transformer architecture, our current approach performs multimodal fusion at the prompt level. Image features and point cloud features are first encoded by their respective pretrained backbones and then projected into the LLM embedding space through learned linear layers. These projected modality tokens are concatenated with the textual prompt prefix before autoregressive decoding.
+
+Concretely, let $\mathbf{Q}_{i}$ denote the projected image tokens and $\mathbf{Q}_{p}$ denote the projected point cloud tokens. The language model is conditioned on the combined prompt
+\begin{equation}
+\mathbf{Z}_0 = [\mathbf{Q}_{i}; \mathbf{Q}_{p}; \mathbf{T}],
+\end{equation}
+where $\mathbf{T}$ denotes the textual instruction or prefix tokens. The decoder then predicts the CadQuery program autoregressively:
+\begin{equation}
+\mathbb{P}_{\theta}(s_t \mid s_{<t}, \mathbf{Q}_{i}, \mathbf{Q}_{p}, \mathbf{T}).
+\end{equation}
+
+This formulation preserves implementation simplicity while allowing both image and pointclouds to influence code generation from the start of decoding. 
+
+\paragraph{Adaptation Regimes.}
+We evaluate three preliminary training strategies to isolate the role of learned multimodal alignment and downstream reward optimization:
+\begin{itemize}
+    \item \textbf{Exp-1: Linear-only tuning.} Both modality adapters are frozen, and only the final linear projection layers into the LLM space are trained.
+    \item \textbf{Exp-2: Adapter + LLM tuning.} The modality adapters are fine-tuned jointly with the LLM to test whether deeper co-adaptation improves geometric grounding and code synthesis.
+    \item \textbf{Exp-3: Adapter + LLM + RL tuning.} Starting from the supervised fine-tuned model, we further optimize generation using reinforcement learning with task-level rewards based on CAD executability and geometric quality, such as successful program execution, valid STEP export, and geometric overlap with the target shape.
+\end{itemize}
+These preliminary studies help characterize the trade-off between parameter efficiency, task-specific multimodal integration, and reward-driven optimization for executable CAD program synthesis.
+
+\section{CAD-Evolve Dataset Construction}
+Our training data is based on \textbf{CAD-Evolve} \cite{elistratov2026cadevolve}, a large-scale procedural dataset derived from executable CadQuery Python programs that defines a parametric CAD object. 
+
+\paragraph{Program-to-Geometry Conversion.}
+For each executable CadQuery Python file, the script is run to obtain the final CAD shape. The resulting shape is then tessellated into a triangle mesh, which serves as the common geometric representation for downstream rendering and point sampling. This allows us to consistently derive both multi-view images and point clouds from the same underlying procedural object while preserving the original source code as the training target.
+
+\paragraph{Multi-View Rendering.}
+From each tessellated mesh, we generate \textbf{8 rendered views} using a fixed set of canonical camera directions corresponding to the eight octants of 3D space:
+\[
+(1,-1,1),\; (-1,-1,1),\; (1,1,1),\; (-1,1,1),\;
+(1,-1,-1),\; (-1,-1,-1),\; (1,1,-1),\; (-1,1,-1).
+\]
+These viewpoints provide broad coverage of the object from all sign combinations of the three coordinate axes, helping expose front/back, top/bottom, and left/right geometric structure. Before rendering, the mesh vertices are centered and normalized so that objects fit within a common viewing volume. We render each view on a white background at fixed image resolution, producing a standardized 8-view image set for each CAD model.
+
+\paragraph{Point Cloud Sampling.}
+To construct the 3D geometric modality, we sample a point cloud directly from the tessellated mesh surface. We use approximately uniform surface sampling to distribute points across the mesh surface. If even sampling fails for a given mesh, we fall back to standard surface-area-weighted sampling. In our default setup, each object is represented by a point cloud of 10,000 sampled surface points. This representation preserves explicit geometric coverage while remaining lightweight enough for point-based encoding.
+
+\paragraph{Final Data Tuple.}
+This process yields aligned tuples of
+\[
+(\text{CadQuery code}, \text{8 rendered images}, \text{point cloud}),
+\]
+where all modalities originate from the same executable CAD program. The resulting dataset size is \textbf{953,805} and we believe is well suited for studying multimodal CAD generation because it pairs procedural supervision with both 2D visual evidence and explicit 3D geometry.
+
+\section{Experimental Methodology}
+
+\paragraph{Dataset (CAD-Evolve).}
+Model variants are trained on the CAD-Evolve dataset, comprising roughly 950k procedural objects, each containing 8 multi-view images, a point cloud, and corresponding CadQuery code. Because each object is generated from executable Python source, the dataset preserves a strong link between geometry and procedural construction logic.
+
+\paragraph{Evaluation Benchmarks and Splits.}
+To rigorously assess syntactic validity and geometric fidelity across diverse domains, we divide evaluation into five distinct test environments:
+\begin{itemize}
+    \item \textbf{DeepCAD} \cite{wu2021deepcad} (3{,}000 samples; 1{,}000 each for Easy, Medium, and Hard): Human-designed models for evaluating standard CAD adherence.
+    \item \textbf{ABC-Simple} \cite{koch2019abc} (3{,}000 samples; 1{,}000 each for Easy, Medium, and Hard): Samples containing primarily sketch-and-extrude style operations.
+    \item \textbf{ABC-Complex} \cite{koch2019abc} (3{,}000 samples; 1{,}000 each for Easy, Medium, and Hard): Samples with more complex operations such as fillet, revolve, chamfer, and compound topology.
+    \item \textbf{Mechanical Components Benchmark (MCB)} \cite{sangpil2020large} (3{,}000 samples): Mechanical Components Benchmark for engineering-focused evaluation.
+    \item \textbf{Objaverse} \cite{deitke2023objaverse} (3{,}000 samples): Zero-shot transfer to generalized, in-the-wild object geometries.
+\end{itemize}
+For DeepCAD, ABC-Simple, and ABC-Complex, samples are partitioned evenly across complexity bins and selected to maximize diversity from one another in latent space, so that each subset covers a broad range of geometries rather than concentrating on highly similar examples.
+
+\paragraph{Complexity Stratification.}
+DeepCAD, ABC-Simple, and ABC-Complex are each stratified into three complexity levels according to the number of faces in the target geometry, with \textbf{1,000 samples per bin}:
+\begin{itemize}
+    \item \textbf{Easy:} 1--20 faces
+    \item \textbf{Medium:} 20--100 faces
+    \item \textbf{Hard:} $>100$ faces
+\end{itemize}
+Within each bin, examples are selected to be diverse in latent space, encouraging broad geometric coverage and reducing redundancy among highly similar shapes. Figure~\ref{fig:benchmarks} shows the benchmark construction procedure, highlighting the complexity-stratified evaluation setup used across the datasets.
+
+\paragraph{Baselines and Metrics.}
+We compare our approach against a image-only baseline (CAD-Coder) and point-cloud-only baseline (CAD-Recode). We report two evaluation metrics:
+\begin{itemize}
+    \item \textbf{STEP Feasibility (\%):} the percentage of generated CadQuery programs that can be successfully executed and exported into a valid STEP file;
+    \item \textbf{IoU (\%):} a geometric overlap metric computed between predicted and ground-truth geometry.
+\end{itemize}
+These metrics jointly measure practical executability and geometric fidelity. We report results across all five datasets and complexity bins.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\linewidth]{figures/benchmarks.png}
+    \caption{\textbf{Example benchmark visualization.} Illustration of the ABC-Complex evaluation set, one of the five benchmarks used in this work. Samples are stratified into Easy, Medium, and Hard subsets according to face-count complexity.}
+    \label{fig:benchmarks}
+\end{figure}
+
+\section{Results and Discussion}
+
+\textit{Note: The current table reports the evaluation format and presently includes only the CAD-Recode baseline results available at this stage. In the final version, we will add the CAD-Coder vision-only baseline as well as our three preliminary experimental settings: (1) linear-only tuning with frozen modality adapters, and (2) joint fine-tuning of the adapters and the LLM.}
+
+\paragraph{Evaluation Metrics.}
+We report two complementary metrics to assess generated CAD programs. First, \textbf{STEP Feasibility} measures the percentage of generated CadQuery programs that can be successfully executed and exported as a valid STEP file, providing a practical indicator of CAD usability. Second, \textbf{IoU} measures geometric overlap between the predicted and reference shape.
+
+\paragraph{Benchmark Structure.}
+Evaluation is performed across five datasets: DeepCAD, ABC-Simple, ABC-Complex, MCB, and Objaverse. Each dataset is further stratified into three complexity bins based on the number of faces in the target geometry: \textbf{Easy} (1--150), \textbf{Medium} (151--1000), and \textbf{Hard} ($>1000$). These subsets are sampled on a logarithmic scale to provide balanced coverage across geometric complexity.
+
+\paragraph{Current Baseline Reporting.}
+Table~\ref{tab:combined_results_full} summarizes the current reporting format. At present, we include the CAD-Recode baseline as our available geometry-conditioned reference. The final version of the paper will expand this table to include CAD-Coder and both of our multimodal fine-tuning experiments for direct comparison under the same evaluation pipeline.
+
+\begin{table*}[t]
+\centering
+\caption{Current benchmark results. The table reports STEP Feasibility (\%, higher is better) and mean IoU (\%, higher is better). DeepCAD, ABC-Simple, and ABC-Complex are stratified into Easy (E), Medium (M), and Hard (H) subsets. MCB and Objaverse are currently reported as overall values.}
+\label{tab:combined_results_full}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{@{}llccccccccccc@{}}
+\toprule
+\multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Metric}}
+& \multicolumn{3}{c}{\textbf{DeepCAD}}
+& \multicolumn{3}{c}{\textbf{ABC-Simple}}
+& \multicolumn{3}{c}{\textbf{ABC-Complex}}
+& \textbf{MCB}
+& \textbf{Objaverse} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8} \cmidrule(lr){9-11}
+&
+& \textbf{E} & \textbf{M} & \textbf{H}
+& \textbf{E} & \textbf{M} & \textbf{H}
+& \textbf{E} & \textbf{M} & \textbf{H}
+& \textbf{All}
+& \textbf{All} \\
+\midrule
+
+\multirow{2}{*}{CAD-Recode (Pointcloud)}
+& STEP Feasibility (\%) & 97.4 & 95.2 & 94.4 & 96.1 & 87.4 & 85.8 & 92.7 & 89.5 & 89.3 & 93.9 & 88.0 \\
+& IoU Mean (\%)         & 96.3 & 90.1 & 85.8 & 89.2 & 83.1 & 73.4 & 88.5 & 74.1 & 64.3 & 97.5 & 63.5 \\
+\midrule
+
+\multirow{2}{*}{CAD-Coder (Image)}
+& STEP Feasibility (\%) & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+& IoU Mean (\%)         & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\midrule
+
+\multirow{2}{*}{Ours Exp-1 (Linear-only tuning)}
+& STEP Feasibility (\%) & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+& IoU Mean (\%)         & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\midrule
+
+\multirow{2}{*}{Ours Exp-2 (Adapter + LLM tuning)}
+& STEP Feasibility (\%) & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+& IoU Mean (\%)         & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\midrule
+
+\multirow{2}{*}{Ours Exp-3 (Adapter + LLM + RL)}
+& STEP Feasibility (\%) & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+& IoU Mean (\%)         & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD & TBD \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+\paragraph{Preliminary Interpretation.}
+Although the table is not yet complete, this reporting format reflects the two properties we currently care about most: \emph{executability} and \emph{geometric fidelity}. CAD-Recode serves as a strong current reference because it conditions directly on 3D geometry. As we add CAD-Coder and our multimodal variants, we expect the most informative comparisons to appear in the Medium and Hard subsets, where geometric ambiguity and topological complexity are highest.
+
+\paragraph{Expected Comparisons.}
+Our preliminary experiments are designed to isolate the effect of adaptation depth and reward-driven optimization. We expect \textbf{Exp-1} to provide a strong parameter-efficient baseline by learning only lightweight linear projections into the LLM space, while \textbf{Exp-2} should better align image, point cloud, and language representations through broader joint fine-tuning. We further expect \textbf{Exp-3}, which adds reinforcement learning on top of supervised fine-tuning, to improve task-level performance by directly optimizing CAD-specific objectives such as executability, valid STEP export, and geometric fidelity. The final comparison against CAD-Coder will clarify the extent to which explicit 3D conditioning and reward-based optimization improve STEP feasibility and IoU over image-only generation.
+
+\section{Next Steps and Future Work}
+The immediate next step is to complete the missing benchmark runs for CAD-Coder and for our three multimodal training settings. This will allow direct comparison between image-only conditioning, geometry-only conditioning, and prompt-level multimodal fusion under a unified evaluation protocol.
+
+Beyond these remaining experiments, we plan to further study how adaptation strategy affects robustness on complex CAD programs, especially in the ABC-Complex and MCB settings where execution failures and geometric deviations are most likely. We also plan to investigate reinforcement learning fine-tuning using compiler success, STEP export validity, and geometric overlap as reward signals, with the goal of improving both CAD executability and final shape accuracy.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
