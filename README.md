@@ -12,6 +12,8 @@ This repository accompanies the paper draft in `new.tex` and explores a tri-moda
 
 The project investigates prompt-level multimodal fusion for CAD program generation. Image features and point cloud features are encoded by pretrained backbones, projected into the language model embedding space, and prepended to the textual context before autoregressive decoding.
 
+![Overview figure](summary_placeholder.png)
+
 The paper draft describes:
 
 - a frozen DINOv2 image encoder with learned projection layers
