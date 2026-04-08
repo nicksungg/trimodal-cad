@@ -31,8 +31,6 @@ The main goal is to improve CAD code generation by using explicit 3D geometry al
 
 ## Contents
 
-- `new.tex` — paper draft for the multimodal CAD project
-- `summary_placeholder.png` — overview figure used in the draft
 - `cad_recode_benchmark/` — benchmark materials and scripts related to CAD-Recode-style evaluation
 - `evaluation_data/` — evaluation dataset preparation materials
 - `training_data/` — training data preparation materials
