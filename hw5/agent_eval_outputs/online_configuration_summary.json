@@ -1,0 +1,18 @@
+{
+  "web_only_max_steps_6": {
+    "runs": 5,
+    "success_rate": 0.8,
+    "avg_latency_seconds": 770.79,
+    "error_rate": 0.0,
+    "estimated_total_tokens": 929,
+    "notes": "Smaller tool set and lower step budget; cheaper but cannot inspect local papers/projects."
+  },
+  "custom_tools_max_steps_8": {
+    "runs": 5,
+    "success_rate": 1.0,
+    "avg_latency_seconds": 1325.86,
+    "error_rate": 0.0,
+    "estimated_total_tokens": 1044,
+    "notes": "Larger tool set with local paper/project context; should improve grounding at some latency cost."
+  }
+}

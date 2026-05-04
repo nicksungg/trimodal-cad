@@ -1,0 +1,14 @@
+{
+  "baseline_web_tools": {
+    "runs": 5,
+    "success_rate": 1.0,
+    "avg_latency_seconds": 1097.73,
+    "error_rate": 0.0
+  },
+  "custom_local_paper_project_tools": {
+    "runs": 5,
+    "success_rate": 0.8,
+    "avg_latency_seconds": 1527.42,
+    "error_rate": 0.0
+  }
+}
