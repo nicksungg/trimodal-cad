@@ -1,0 +1,16 @@
+# Extracted from cad_recode/cad-recode-main/demo.ipynb and demo_working.ipynb
+
+recode:
+  model_class: CADRecode
+  point_encoder_class: FourierPointEncoder
+  llm_tokenizer_name: Qwen/Qwen2-1.5B
+  recode_checkpoint_name: filapro/cad-recode-v1.5
+  point_encoder_notes:
+    - "Point encoder is instantiated as FourierPointEncoder(config.hidden_size) inside CADRecode."
+    - "Notebook does not provide a separate standalone point-encoder checkpoint file."
+    - "Point-encoder weights are embedded inside the full model checkpoint filapro/cad-recode-v1.5."
+
+dinov2:
+  base_model_name: facebook/dinov2-base
+  notes:
+    - "This is the default vision encoder used in hybrid_multimodal_stack scaffold."

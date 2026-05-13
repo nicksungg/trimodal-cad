@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.eggs/
+build/
+dist/
+
+# OS
+.DS_Store
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Large model weights — distributed out-of-band, not via git.
+# See hybrid_multimodal_stack/README.md "Releasing the trained weights" for download instructions.
+hybrid_multimodal_stack/outputs/dinov2-base/model.safetensors
+hybrid_multimodal_stack/outputs/final_model/checkpoint_step_*.pt
+hybrid_multimodal_stack/outputs/final_model/final.pt
+hybrid_multimodal_stack/outputs/final_model/*.pt
